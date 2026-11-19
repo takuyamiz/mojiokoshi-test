@@ -1,0 +1,56 @@
+name: Build and deploy Whisper Tiny PWA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+      - name: Clone whisper.cpp
+        run: git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git whisper.cpp
+      - name: Build WebAssembly demo
+        run: |
+          cd whisper.cpp
+          mkdir -p build-em && cd build-em
+          emcmake cmake .. -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF
+          cmake --build . -j 2
+      - name: Assemble PWA site
+        run: |
+          mkdir -p site/models site/icons
+          cp -R whisper.cpp/build-em/bin/whisper.wasm/. site/
+          cp whisper.cpp/build-em/bin/libmain.js site/
+          cp whisper.cpp/build-em/bin/libmain.wasm site/
+          cp whisper.cpp/build-em/bin/libmain.worker.js site/
+          cp pwa-assets/manifest.webmanifest site/
+          cp pwa-assets/sw.js site/
+          cp pwa-assets/icons/* site/icons/
+          curl -L --fail --retry 3 -o site/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          python3 scripts/patch_demo.py
+          touch site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - run: echo "Deployment completed"
